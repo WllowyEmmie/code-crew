@@ -1,0 +1,196 @@
+# Language profiles. Adding a language = one entry here + one Dockerfile in images/<image>/.
+#
+# Each profile:
+#   image      folder under sandbox/images/ (one container per image per session)
+#   detect     list of condition sets; the profile matches if ANY set passes
+#   setup      steps the harness runs WITH network before the agent starts (install deps)
+#   test       steps git_commit runs before every commit (no network)
+#   allowed    command prefixes the agent may pass to run_command (routed to this container)
+#   artifacts  dependency/build folders never to commit (.git/info/exclude)
+#
+# Conditions (all keys in a set must pass):
+#   file = [...]        any of these exists at the repo root (globs like "*.sln" allowed)
+#   no_file = [...]     none of these exists at the root
+#   glob = [...]        a file matching any pattern exists anywhere (skips deps/build folders)
+#   dir = [...]         any of these folders exists at the root
+#   contains = ["file", "text"]      file exists and contains text
+#   not_contains = ["file", "text"]  file missing or doesn't contain text
+#   script = [...]      package.json has any of these scripts (npm's placeholder test doesn't count)
+
+# ---------------- Python ----------------
+[python]
+image = "python"
+detect = [{ file = ["pyproject.toml", "requirements.txt", "setup.py", "*.py"] }]
+setup = [
+  { run = "python3 -m pip install -q --break-system-packages -r requirements.txt", when = { file = ["requirements.txt"] } },
+  { run = "python3 -m pip install -q --break-system-packages -e .", when = { file = ["pyproject.toml", "setup.py"] } },
+]
+test = [{ run = "python3 -m pytest -q", when = { glob = ["test_*.py", "*_test.py"] } }]
+allowed = ["pytest", "python -m pytest", "python3 -m pytest"]
+artifacts = ["__pycache__/", ".pytest_cache/", "*.pyc", "*.egg-info/"]
+
+# ---------------- JavaScript / TypeScript (Node, frontend) ----------------
+[node]
+image = "node"
+detect = [{ file = ["package.json"], no_file = ["bun.lockb", "bun.lock", "deno.json", "deno.jsonc"] }]
+setup = [
+  # --ignore-scripts: packages can't run their own install scripts while the network is on.
+  { run = "npm ci --ignore-scripts --no-audit --no-fund", when = { file = ["package-lock.json"] } },
+  { run = "yarn install --frozen-lockfile --ignore-scripts", when = { file = ["yarn.lock"] } },
+  { run = "corepack enable && pnpm install --frozen-lockfile --ignore-scripts", when = { file = ["pnpm-lock.yaml"] } },
+  { run = "npm install --ignore-scripts --no-audit --no-fund", when = { no_file = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"] } },
+]
+test = [
+  { run = "npm test", when = { script = ["test"] } },
+  { run = "npm run lint", when = { script = ["lint"] } },
+]
+allowed = ["npm test", "npm run", "npx tsc", "npx eslint", "npx vitest run", "npx jest"]
+artifacts = ["node_modules/", "dist/", ".next/", "coverage/"]
+
+[bun]
+image = "bun"
+detect = [{ file = ["bun.lockb", "bun.lock"] }]
+setup = [{ run = "bun install --frozen-lockfile --ignore-scripts" }]
+test = [{ run = "bun test", when = { glob = ["*.test.*", "*.spec.*", "*_test.*"] } }]
+allowed = ["bun test", "bun run"]
+artifacts = ["node_modules/", "dist/"]
+
+[deno]
+image = "deno"
+detect = [{ file = ["deno.json", "deno.jsonc"] }]
+setup = [{ run = "deno install" }]
+test = [{ run = "deno test", when = { glob = ["*_test.ts", "*.test.ts", "*_test.js", "*.test.js"] } }]
+allowed = ["deno test", "deno check", "deno lint", "deno fmt --check"]
+artifacts = ["node_modules/"]
+
+# ---------------- Go ----------------
+[go]
+image = "go"
+detect = [{ file = ["go.mod"] }]
+setup = [{ run = "go mod download" }]
+test = [{ run = "go test ./..." }]
+allowed = ["go test", "go build", "go vet", "gofmt"]
+artifacts = []
+
+# ---------------- Rust ----------------
+[rust]
+image = "rust"
+detect = [{ file = ["Cargo.toml"] }]
+setup = [{ run = "cargo fetch" }]
+test = [{ run = "cargo test --offline" }]
+allowed = ["cargo test", "cargo build", "cargo check"]
+artifacts = ["target/"]
+
+# ---------------- Java / Kotlin ----------------
+[maven]
+image = "maven"
+detect = [{ file = ["pom.xml"] }]
+# Running the tests once during setup makes Maven download every plugin it needs
+# (go-offline alone misses some), so the offline test run later works.
+setup = [{ run = "mvn -B -q test -Dmaven.test.failure.ignore=true" }]
+test = [{ run = "mvn -B -o -q test" }]
+allowed = ["mvn -B -o", "mvn -o"]
+artifacts = ["target/"]
+
+[gradle]
+image = "gradle"
+detect = [{ file = ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"] }]
+setup = [
+  { run = "./gradlew --no-daemon test --continue || true", when = { file = ["gradlew"] } },
+  { run = "gradle --no-daemon test --continue || true", when = { no_file = ["gradlew"] } },
+]
+test = [
+  { run = "./gradlew --no-daemon --offline test", when = { file = ["gradlew"] } },
+  { run = "gradle --no-daemon --offline test", when = { no_file = ["gradlew"] } },
+]
+allowed = ["./gradlew --no-daemon --offline", "gradle --no-daemon --offline"]
+artifacts = ["build/", ".gradle/"]
+
+# ---------------- Scala ----------------
+[scala]
+image = "scala"
+detect = [{ file = ["build.sbt"] }]
+setup = [{ run = "sbt -batch update Test/compile" }]
+test = [{ run = "sbt -batch test" }]
+allowed = ["sbt -batch test", "sbt -batch compile"]
+artifacts = ["target/", "project/target/", ".bsp/"]
+
+# ---------------- C# / F# / .NET ----------------
+[dotnet]
+image = "dotnet"
+detect = [{ file = ["*.sln"] }, { glob = ["*.csproj", "*.fsproj"] }]
+setup = [{ run = "dotnet restore" }]
+test = [{ run = "dotnet test --no-restore" }]
+allowed = ["dotnet build --no-restore", "dotnet test --no-restore"]
+artifacts = ["bin/", "obj/"]
+
+# ---------------- PHP ----------------
+[php]
+image = "php"
+detect = [{ file = ["composer.json"] }]
+setup = [{ run = "composer install --no-interaction --no-scripts" }]
+test = [{ run = "vendor/bin/phpunit", when = { contains = ["composer.json", "phpunit"] } }]
+allowed = ["vendor/bin/phpunit", "php -l"]
+artifacts = ["vendor/"]
+
+# ---------------- Ruby ----------------
+[ruby]
+image = "ruby"
+detect = [{ file = ["Gemfile"] }]
+setup = [{ run = "bundle install" }]
+test = [
+  { run = "bundle exec rspec", when = { dir = ["spec"] } },
+  { run = "bundle exec rake test", when = { file = ["Rakefile"], no_file = ["spec"] } },
+]
+allowed = ["bundle exec rspec", "bundle exec rake test"]
+artifacts = ["vendor/bundle/", ".bundle/"]
+
+# ---------------- Elixir ----------------
+[elixir]
+image = "elixir"
+detect = [{ file = ["mix.exs"] }]
+setup = [{ run = "mix deps.get && MIX_ENV=test mix deps.compile" }]
+test = [{ run = "mix test" }]
+allowed = ["mix test", "mix compile", "mix format --check-formatted"]
+artifacts = ["_build/", "deps/"]
+
+# ---------------- Swift (server-side / packages; no iOS) ----------------
+[swift]
+image = "swift"
+detect = [{ file = ["Package.swift"] }]
+setup = [{ run = "swift package resolve" }]
+test = [{ run = "swift test" }]
+allowed = ["swift test", "swift build"]
+artifacts = [".build/"]
+
+# ---------------- Dart / Flutter ----------------
+[flutter]
+image = "flutter"
+detect = [{ contains = ["pubspec.yaml", "sdk: flutter"] }]
+setup = [{ run = "flutter pub get" }]
+test = [{ run = "flutter test", when = { dir = ["test"] } }]
+allowed = ["flutter test", "flutter analyze"]
+artifacts = [".dart_tool/", "build/"]
+
+[dart]
+image = "dart"
+detect = [{ file = ["pubspec.yaml"], not_contains = ["pubspec.yaml", "sdk: flutter"] }]
+setup = [{ run = "dart pub get" }]
+test = [{ run = "dart test", when = { dir = ["test"] } }]
+allowed = ["dart test", "dart analyze"]
+artifacts = [".dart_tool/"]
+
+# ---------------- C / C++ ----------------
+[cpp]
+image = "cpp"
+detect = [{ file = ["CMakeLists.txt"] }, { file = ["Makefile"], glob = ["*.c", "*.cpp", "*.cc", "*.cxx"] }]
+# The configure step can download dependencies (FetchContent), so it runs during setup.
+setup = [{ run = "cmake -S . -B build", when = { file = ["CMakeLists.txt"] } }]
+test = [
+  { run = "cmake --build build", when = { file = ["CMakeLists.txt"] } },
+  { run = "ctest --test-dir build --output-on-failure", when = { file = ["CMakeLists.txt"] } },
+  { run = "make", when = { file = ["Makefile"], no_file = ["CMakeLists.txt"] } },
+  { run = "make test", when = { contains = ["Makefile", "\ntest:"], no_file = ["CMakeLists.txt"] } },
+]
+allowed = ["cmake --build build", "ctest", "make"]
+artifacts = ["build/"]

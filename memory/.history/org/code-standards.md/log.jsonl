@@ -1,0 +1,2 @@
+{"version": 1, "sha256": "7400f1a974d6", "deleted": false, "author": "unknown", "session": "before-versioning", "time": "2026-11-07T15:58:59+00:00", "note": ""}
+{"version": 2, "sha256": "2a90c7d1d095", "deleted": false, "author": "emmie", "session": "manual", "time": "2026-11-07T15:58:59+00:00", "note": "add per-language naming and doc-comment standards"}

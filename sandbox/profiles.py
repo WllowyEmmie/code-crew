@@ -2,6 +2,7 @@
 import fnmatch
 import json
 import os
+import shlex
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,8 @@ def check(repo: Path, cond: dict | None) -> bool:
         elif key == "script":
             scripts = _npm_scripts(repo)
             ok = any(n in scripts and NO_TEST_SCRIPT not in scripts[n] for n in val)
+        elif key == "no_script":
+            ok = not any(n in _npm_scripts(repo) for n in val)
         else:
             raise ValueError(f"unknown condition '{key}' in profiles.toml")
         if not ok:
@@ -80,6 +83,8 @@ class Profile:
     test: list[dict]
     allowed: tuple[str, ...]
     artifacts: tuple[str, ...]
+    lint: list[dict]
+    tests_go: str = ""  # where this language's tests conventionally live
 
     def matches(self, repo: Path) -> bool:
         return any(check(repo, c) for c in self.detect)
@@ -89,6 +94,23 @@ class Profile:
 
     def test_commands(self, repo: Path) -> list[str]:
         return [t["run"] for t in self.test if check(repo, t.get("when"))]
+
+    def lint_steps(self, repo: Path) -> list[dict]:
+        return [s for s in self.lint if check(repo, s.get("when"))]
+
+    @staticmethod
+    def file_scoped(step: dict) -> bool:
+        """Steps with {files} run only on files the agent changed; others check the whole project."""
+        return "{files}" in step["run"]
+
+    @staticmethod
+    def render(step: dict, changed: list[str]) -> str | None:
+        """Fill {files} with the changed files this step applies to (None if there are none)."""
+        if not Profile.file_scoped(step):
+            return step["run"]
+        pats = step.get("files", ["*"])
+        mine = [f for f in changed if any(fnmatch.fnmatch(f.split("/")[-1], p) for p in pats)]
+        return step["run"].replace("{files}", " ".join(shlex.quote(f) for f in mine)) if mine else None
 
 
 def load_profiles(path: Path = PROFILES_FILE) -> list[Profile]:
@@ -102,6 +124,8 @@ def load_profiles(path: Path = PROFILES_FILE) -> list[Profile]:
             test=d.get("test", []),
             allowed=tuple(d.get("allowed", [])),
             artifacts=tuple(d.get("artifacts", [])),
+            lint=d.get("lint", []),
+            tests_go=d.get("tests_go", ""),
         )
         for name, d in data.items()
     ]

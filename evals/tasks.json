@@ -1,0 +1,22 @@
+[
+  {
+    "id": "roman",
+    "request": "add roman.py with to_roman(n) for 1-3999 and from_roman(s), both raising ValueError for invalid input like 0, 4000, IIII or IC",
+    "hidden_test": "test_eval_roman.py"
+  },
+  {
+    "id": "text_stats",
+    "request": "add text_stats.py with word_counts(text) returning a dict of lowercase word counts that ignores punctuation, and top_words(text, n) returning the n most common words sorted by count, then alphabetically for ties. Raise ValueError if n < 1.",
+    "hidden_test": "test_eval_text_stats.py"
+  },
+  {
+    "id": "lru",
+    "request": "add lru.py with an LRUCache class: LRUCache(capacity) with get(key) returning None if missing and put(key, value), evicting the least recently used item when full. get must count as a use. Raise ValueError if capacity < 1.",
+    "hidden_test": "test_eval_lru.py"
+  },
+  {
+    "id": "palindrome",
+    "request": "add text_utils.py with is_palindrome(s) that ignores case, spaces and punctuation, and returns True for an empty string.",
+    "hidden_test": "test_eval_palindrome.py"
+  }
+]

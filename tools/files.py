@@ -18,14 +18,17 @@ def is_test_path(path: str) -> bool:
     return any(d.lower() in TEST_DIRS for d in parts[:-1]) or bool(TEST_NAME.search(parts[-1]))
 
 
-def make_file_tools(sb, can_write=None):
+def make_file_tools(sb, write_guard=None):
     """File tools for one sandbox session. Paths are relative to the repo root.
-    can_write(path) -> bool limits which files write_file/edit_file may touch (None = any)."""
+    write_guard(path) -> error message or None: the harness's chance to refuse a write
+    (e.g. "test files only", or "read memory first")."""
     root = Path(sb.workdir).resolve()
+    edits: list[tuple[str, str, str]] = []  # (path, old, new) of every edit made with these tools
 
     def check_write(path: str):
-        if can_write and not can_write(path):
-            raise ValueError(f"you may not change {path}; you can only write test files")
+        err = write_guard(path) if write_guard else None
+        if err:
+            raise ValueError(err)
 
     def safe_path(rel: str) -> Path:
         # resolve() follows "..", and symlinks, so this blocks escaping the repo.
@@ -101,9 +104,24 @@ def make_file_tools(sb, can_write=None):
             # The model writes "\n"; match the file's CRLF style so lines we don't touch stay identical.
             old_str = old_str.replace("\r\n", "\n").replace("\n", "\r\n")
             new_str = new_str.replace("\r\n", "\n").replace("\n", "\r\n")
+        if old_str == new_str:
+            return ("error: old_str and new_str are identical, so this edit changes nothing. If a "
+                    "fix keeps failing, the problem is probably elsewhere: re-read the full error "
+                    "(the line and the exact symbol it points at) before editing again.")
         count = text.count(old_str)
         if count != 1:
             return f"error: old_str found {count} times; it must match exactly once. read_file and copy the exact lines."
+        # Going back and forth between versions means the agent is stuck, usually because two
+        # tests can't both pass or a test expects something the request never asked for.
+        # Stop the loop and make it step back, instead of letting it burn every remaining step.
+        if (path, new_str, old_str) in edits or (path, old_str, new_str) in edits:
+            return ("error: this edit repeats or undoes one you already made: you're going back and "
+                    "forth. Stop editing. Re-read the failing test assertions and the request. If two "
+                    "tests can't both pass, or a test expects something the request doesn't say, the "
+                    "TEST is wrong: don't special-case the code to satisfy it. Keep the version that "
+                    "matches the request and call finish('done'), naming the wrong test, what it "
+                    "expects, and why the request says otherwise.")
+        edits.append((path, old_str, new_str))
         with open(p, "w", encoding="utf-8", newline="") as f:
             f.write(text.replace(old_str, new_str))
         return f"edited {path}"

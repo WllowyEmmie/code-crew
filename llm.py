@@ -19,6 +19,12 @@ def get_llm(temperature: float = 0):
         api_key=api_key,
         base_url=OPENROUTER_BASE_URL,
         temperature=temperature,
+        # Caps one reply, so a runaway (the model repeating characters forever) ends quickly.
+        # Generous enough for writing a whole source file in one write_file call.
+        max_tokens=int(os.getenv("CREW_MAX_TOKENS", "8000")),
+        # OpenRouter: only route to providers that support every parameter we send (tools,
+        # tool_choice). Some providers ignore tool_choice, which is how prose replies slip through.
+        extra_body={"provider": {"require_parameters": True}},
     )
 
 

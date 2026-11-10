@@ -7,6 +7,9 @@
 #   test       steps git_commit runs before every commit (no network)
 #   allowed    command prefixes the agent may pass to run_command (routed to this container)
 #   artifacts  dependency/build folders never to commit (.git/info/exclude)
+#   lint       formatter/linter checks git_commit runs. {files} = only the files the agent
+#              changed (matching `files`); without {files} the whole project is checked, and a
+#              check already failing on the base branch is recorded and not enforced.
 #
 # Conditions (all keys in a set must pass):
 #   file = [...]        any of these exists at the repo root (globs like "*.sln" allowed)
@@ -16,21 +19,37 @@
 #   contains = ["file", "text"]      file exists and contains text
 #   not_contains = ["file", "text"]  file missing or doesn't contain text
 #   script = [...]      package.json has any of these scripts (npm's placeholder test doesn't count)
+#   no_script = [...]   package.json has none of these scripts
 
 # ---------------- Python ----------------
 [python]
+tests_go = "test_<module>.py files (pytest), in the same place as the existing tests"
 image = "python"
 detect = [{ file = ["pyproject.toml", "requirements.txt", "setup.py", "*.py"] }]
 setup = [
+  # User-level ruff config (only used when the repo has none): ignore the executable-bit rules,
+  # which Docker Desktop's Windows mounts make meaningless (every file shows as executable).
+  { run = "mkdir -p ~/.config/ruff && printf '[lint]\\nignore = [\"EXE\"]\\nextend-select = [\"N\"]\\n' > ~/.config/ruff/ruff.toml" },
   { run = "python3 -m pip install -q --break-system-packages -r requirements.txt", when = { file = ["requirements.txt"] } },
   { run = "python3 -m pip install -q --break-system-packages -e .", when = { file = ["pyproject.toml", "setup.py"] } },
 ]
 test = [{ run = "python3 -m pytest -q", when = { glob = ["test_*.py", "*_test.py"] } }]
-allowed = ["pytest", "python -m pytest", "python3 -m pytest"]
+allowed = ["pytest", "python -m pytest", "python3 -m pytest", "ruff check", "ruff format"]
 artifacts = ["__pycache__/", ".pytest_cache/", "*.pyc", "*.egg-info/"]
 
 # ---------------- JavaScript / TypeScript (Node, frontend) ----------------
+lint = [
+  # ruff reads the repo's own config (pyproject.toml / ruff.toml) if there is one.
+  # EXE rules check the file's executable bit. Docker Desktop on Windows shows every mounted
+  # file as executable (rwx), so those rules only measure the sandbox, never the code.
+  # --extend-select N adds pep8-naming (snake_case functions, CamelCase classes), which ruff's
+  # default rules leave out.
+  { run = "ruff check --no-cache --extend-ignore EXE --extend-select N {files}", files = ["*.py"] },
+  { run = "ruff format --check --no-cache {files}", files = ["*.py"] },
+]
+
 [node]
+tests_go = "<name>.test.js / <name>.test.ts next to the code or in __tests__/, for the runner in package.json"
 image = "node"
 detect = [{ file = ["package.json"], no_file = ["bun.lockb", "bun.lock", "deno.json", "deno.jsonc"] }]
 setup = [
@@ -44,10 +63,17 @@ test = [
   { run = "npm test", when = { script = ["test"] } },
   { run = "npm run lint", when = { script = ["lint"] } },
 ]
-allowed = ["npm test", "npm run", "npx tsc", "npx eslint", "npx vitest run", "npx jest"]
+allowed = ["npm test", "npm run", "npx tsc", "npx eslint", "npx vitest run", "npx jest", "npx --no-install prettier", "npx --no-install eslint", "npx --no-install tsc"]
 artifacts = ["node_modules/", "dist/", ".next/", "coverage/"]
+lint = [
+  # The repo's own tools and config only (they come from node_modules; no network to fetch others).
+  { run = "npx --no-install prettier --check {files}", files = ["*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.cjs", "*.css", "*.json", "*.md"], when = { file = [".prettierrc", ".prettierrc.*", "prettier.config.*"] } },
+  { run = "npx --no-install eslint {files}", files = ["*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.cjs"], when = { file = [".eslintrc", ".eslintrc.*", "eslint.config.*"], no_script = ["lint"] } },
+  { run = "npx --no-install tsc --noEmit", when = { file = ["tsconfig.json"] } },
+]
 
 [bun]
+tests_go = "<name>.test.ts next to the code (bun test)"
 image = "bun"
 detect = [{ file = ["bun.lockb", "bun.lock"] }]
 setup = [{ run = "bun install --frozen-lockfile --ignore-scripts" }]
@@ -56,15 +82,22 @@ allowed = ["bun test", "bun run"]
 artifacts = ["node_modules/", "dist/"]
 
 [deno]
+tests_go = "<name>_test.ts next to the code (deno test)"
 image = "deno"
 detect = [{ file = ["deno.json", "deno.jsonc"] }]
 setup = [{ run = "deno install" }]
 test = [{ run = "deno test", when = { glob = ["*_test.ts", "*.test.ts", "*_test.js", "*.test.js"] } }]
-allowed = ["deno test", "deno check", "deno lint", "deno fmt --check"]
+allowed = ["deno test", "deno check", "deno lint", "deno fmt --check", "deno fmt"]
 artifacts = ["node_modules/"]
 
 # ---------------- Go ----------------
+lint = [
+  { run = "deno fmt --check {files}", files = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.json", "*.md"] },
+  { run = "deno lint {files}", files = ["*.ts", "*.tsx", "*.js", "*.jsx"] },
+]
+
 [go]
+tests_go = "<file>_test.go in the same package directory as the code it tests"
 image = "go"
 detect = [{ file = ["go.mod"] }]
 setup = [{ run = "go mod download" }]
@@ -73,26 +106,44 @@ allowed = ["go test", "go build", "go vet", "gofmt"]
 artifacts = []
 
 # ---------------- Rust ----------------
+lint = [
+  { run = "out=$(gofmt -l {files}); if [ -n \"$out\" ]; then echo \"not gofmt-formatted (fix: gofmt -w FILE): $out\"; exit 1; fi", files = ["*.go"] },
+  { run = "go vet ./..." },
+]
+
 [rust]
+tests_go = "unit tests in a #[cfg(test)] mod tests block in the same file; integration tests in tests/<name>.rs (a .rs file anywhere else is not compiled by cargo test)"
 image = "rust"
 detect = [{ file = ["Cargo.toml"] }]
 setup = [{ run = "cargo fetch" }]
 test = [{ run = "cargo test --offline" }]
-allowed = ["cargo test", "cargo build", "cargo check"]
+allowed = ["cargo test", "cargo build", "cargo check", "cargo fmt", "cargo clippy"]
 artifacts = ["target/"]
 
 # ---------------- Java / Kotlin ----------------
+lint = [
+  { run = "cargo fmt --check" },
+  { run = "cargo clippy --offline --all-targets -- -D warnings" },
+]
+
 [maven]
+tests_go = "src/test/java/<same package path>/<Class>Test.java"
 image = "maven"
 detect = [{ file = ["pom.xml"] }]
 # Running the tests once during setup makes Maven download every plugin it needs
 # (go-offline alone misses some), so the offline test run later works.
 setup = [{ run = "mvn -B -q test -Dmaven.test.failure.ignore=true" }]
 test = [{ run = "mvn -B -o -q test" }]
-allowed = ["mvn -B -o", "mvn -o"]
+allowed = ["mvn -B -o", "mvn -o", "mvn -B -o -q spotless:apply"]
 artifacts = ["target/"]
+lint = [
+  # Java style is enforced through whatever the project configured (Spotless or Checkstyle).
+  { run = "mvn -B -o -q spotless:check", when = { contains = ["pom.xml", "spotless"] } },
+  { run = "mvn -B -o -q checkstyle:check", when = { contains = ["pom.xml", "checkstyle"] } },
+]
 
 [gradle]
+tests_go = "src/test/java/<same package path>/<Class>Test.java (Kotlin: src/test/kotlin/...)"
 image = "gradle"
 detect = [{ file = ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"] }]
 setup = [
@@ -107,34 +158,60 @@ allowed = ["./gradlew --no-daemon --offline", "gradle --no-daemon --offline"]
 artifacts = ["build/", ".gradle/"]
 
 # ---------------- Scala ----------------
+lint = [
+  { run = "./gradlew --no-daemon --offline spotlessCheck", when = { file = ["gradlew"], contains = ["build.gradle.kts", "spotless"] } },
+  { run = "./gradlew --no-daemon --offline spotlessCheck", when = { file = ["gradlew"], contains = ["build.gradle", "spotless"] } },
+  { run = "./gradlew --no-daemon --offline ktlintCheck", when = { file = ["gradlew"], contains = ["build.gradle.kts", "ktlint"] } },
+  { run = "./gradlew --no-daemon --offline detekt", when = { file = ["gradlew"], contains = ["build.gradle.kts", "detekt"] } },
+]
+
 [scala]
+tests_go = "src/test/scala/<same package path>/<Class>Spec.scala"
 image = "scala"
 detect = [{ file = ["build.sbt"] }]
 setup = [{ run = "sbt -batch update Test/compile" }]
 test = [{ run = "sbt -batch test" }]
-allowed = ["sbt -batch test", "sbt -batch compile"]
+allowed = ["sbt -batch test", "sbt -batch compile", "sbt -batch scalafmtAll"]
 artifacts = ["target/", "project/target/", ".bsp/"]
 
 # ---------------- C# / F# / .NET ----------------
+lint = [
+  { run = "sbt -batch scalafmtCheckAll", when = { file = [".scalafmt.conf"] } },
+]
+
 [dotnet]
+tests_go = "a separate test project, e.g. tests/<Project>.Tests/, referenced from the solution"
 image = "dotnet"
 detect = [{ file = ["*.sln"] }, { glob = ["*.csproj", "*.fsproj"] }]
 setup = [{ run = "dotnet restore" }]
 test = [{ run = "dotnet test --no-restore" }]
-allowed = ["dotnet build --no-restore", "dotnet test --no-restore"]
+allowed = ["dotnet build --no-restore", "dotnet test --no-restore", "dotnet format --no-restore"]
 artifacts = ["bin/", "obj/"]
 
 # ---------------- PHP ----------------
+lint = [
+  # Uses the repo's .editorconfig; built into the .NET SDK.
+  { run = "dotnet format --verify-no-changes --no-restore" },
+]
+
 [php]
+tests_go = "tests/<Class>Test.php (PHPUnit)"
 image = "php"
 detect = [{ file = ["composer.json"] }]
 setup = [{ run = "composer install --no-interaction --no-scripts" }]
 test = [{ run = "vendor/bin/phpunit", when = { contains = ["composer.json", "phpunit"] } }]
-allowed = ["vendor/bin/phpunit", "php -l"]
+allowed = ["vendor/bin/phpunit", "php -l", "phpcs", "phpcbf"]
 artifacts = ["vendor/"]
 
 # ---------------- Ruby ----------------
+lint = [
+  # PSR-12 is the PHP community standard; a repo phpcs.xml overrides it.
+  { run = "phpcs --standard=PSR12 {files}", files = ["*.php"], when = { no_file = ["phpcs.xml", "phpcs.xml.dist", ".phpcs.xml"] } },
+  { run = "phpcs {files}", files = ["*.php"], when = { file = ["phpcs.xml", "phpcs.xml.dist", ".phpcs.xml"] } },
+]
+
 [ruby]
+tests_go = "spec/<path>_spec.rb (RSpec) or test/<path>_test.rb (Minitest), whichever the repo already uses"
 image = "ruby"
 detect = [{ file = ["Gemfile"] }]
 setup = [{ run = "bundle install" }]
@@ -142,46 +219,74 @@ test = [
   { run = "bundle exec rspec", when = { dir = ["spec"] } },
   { run = "bundle exec rake test", when = { file = ["Rakefile"], no_file = ["spec"] } },
 ]
-allowed = ["bundle exec rspec", "bundle exec rake test"]
+allowed = ["bundle exec rspec", "bundle exec rake test", "rubocop"]
 artifacts = ["vendor/bundle/", ".bundle/"]
 
 # ---------------- Elixir ----------------
+lint = [
+  # RuboCop implements the community Ruby Style Guide; reads the repo's .rubocop.yml.
+  { run = "rubocop --cache false {files}", files = ["*.rb", "*.rake", "Gemfile", "Rakefile"] },
+]
+
 [elixir]
+tests_go = "test/<path>_test.exs"
 image = "elixir"
 detect = [{ file = ["mix.exs"] }]
 setup = [{ run = "mix deps.get && MIX_ENV=test mix deps.compile" }]
 test = [{ run = "mix test" }]
-allowed = ["mix test", "mix compile", "mix format --check-formatted"]
+allowed = ["mix test", "mix compile", "mix format --check-formatted", "mix format"]
 artifacts = ["_build/", "deps/"]
 
 # ---------------- Swift (server-side / packages; no iOS) ----------------
+lint = [
+  { run = "mix format --check-formatted {files}", files = ["*.ex", "*.exs"] },
+  { run = "mix credo --strict", when = { contains = ["mix.exs", ":credo"] } },
+]
+
 [swift]
+tests_go = "Tests/<Target>Tests/<Name>Tests.swift"
 image = "swift"
 detect = [{ file = ["Package.swift"] }]
 setup = [{ run = "swift package resolve" }]
 test = [{ run = "swift test" }]
-allowed = ["swift test", "swift build"]
+allowed = ["swift test", "swift build", "swift format"]
 artifacts = [".build/"]
 
 # ---------------- Dart / Flutter ----------------
+lint = [
+  { run = "swift format lint --strict {files}", files = ["*.swift"] },
+]
+
 [flutter]
+tests_go = "test/<name>_test.dart"
 image = "flutter"
 detect = [{ contains = ["pubspec.yaml", "sdk: flutter"] }]
 setup = [{ run = "flutter pub get" }]
 test = [{ run = "flutter test", when = { dir = ["test"] } }]
-allowed = ["flutter test", "flutter analyze"]
+allowed = ["flutter test", "flutter analyze", "dart format"]
 artifacts = [".dart_tool/", "build/"]
+lint = [
+  { run = "dart format --output=none --set-exit-if-changed {files}", files = ["*.dart"] },
+  { run = "flutter analyze" },
+]
 
 [dart]
+tests_go = "test/<name>_test.dart"
 image = "dart"
 detect = [{ file = ["pubspec.yaml"], not_contains = ["pubspec.yaml", "sdk: flutter"] }]
 setup = [{ run = "dart pub get" }]
 test = [{ run = "dart test", when = { dir = ["test"] } }]
-allowed = ["dart test", "dart analyze"]
+allowed = ["dart test", "dart analyze", "dart format"]
 artifacts = [".dart_tool/"]
 
 # ---------------- C / C++ ----------------
+lint = [
+  { run = "dart format --output=none --set-exit-if-changed {files}", files = ["*.dart"] },
+  { run = "dart analyze" },
+]
+
 [cpp]
+tests_go = "a tests/ folder whose test executables are registered in CMakeLists.txt (enable_testing + add_test)"
 image = "cpp"
 detect = [{ file = ["CMakeLists.txt"] }, { file = ["Makefile"], glob = ["*.c", "*.cpp", "*.cc", "*.cxx"] }]
 # The configure step can download dependencies (FetchContent), so it runs during setup.
@@ -192,5 +297,10 @@ test = [
   { run = "make", when = { file = ["Makefile"], no_file = ["CMakeLists.txt"] } },
   { run = "make test", when = { contains = ["Makefile", "\ntest:"], no_file = ["CMakeLists.txt"] } },
 ]
-allowed = ["cmake --build build", "ctest", "make"]
+allowed = ["cmake --build build", "ctest", "make", "clang-format"]
 artifacts = ["build/"]
+lint = [
+  # Uses the repo's .clang-format if present, otherwise Google style.
+  { run = "clang-format --dry-run --Werror --style=file --fallback-style=Google {files}", files = ["*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hpp"] },
+]
+

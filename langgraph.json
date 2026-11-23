@@ -1,0 +1,10 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "code_crew": "./studio.py:graph"
+  },
+  "env": ".env"
+}

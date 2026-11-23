@@ -77,6 +77,22 @@ python run_evals.py --repeat 2
 python run_evals.py --compare       # every saved run side by side
 ```
 
+### In LangGraph Studio
+
+```powershell
+pip install -r requirements.txt     # includes langgraph-cli[inmem]
+langgraph dev --allow-blocking --no-reload
+```
+
+It opens Studio at `https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024` (needs a
+free `LANGSMITH_API_KEY` in `.env`). Pick the `code_crew` graph, fill in `request` (and
+optionally `branch` or `langs`), and submit. You see the graph run node by node — setup →
+builder → test-writer → reviewer → wrap-up — and each node's output includes that agent's whole
+conversation. The run publishes exactly like `run_crew.py`. The graph is in `studio.py`; it
+reuses the crew's wiring (`add_crew` in `agents/crew.py`) and `start_session` / `end_session`
+from `run_crew.py`. `--no-reload` stops a code edit from restarting the server mid-run;
+`--allow-blocking` because the crew calls Docker and git synchronously.
+
 A failed run that made commits still pushes its branch as an unapproved draft (no pull
 request), so `--branch` can continue it.
 
@@ -201,5 +217,6 @@ sandbox/       Sandbox class, language profiles, Dockerfiles
 skills/        SKILL.md procedures
 tools/         file, terminal, git, memory, findings, skills, repo-facts, publish
 run_crew.py    run the crew        run_dream.py   dreaming        run_evals.py   evals
+studio.py      the crew for LangGraph Studio (langgraph.json points at it)
 llm.py         OpenRouter model + retries         transcripts.py session transcripts
 ```

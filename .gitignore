@@ -5,3 +5,4 @@ __pycache__/
 transcripts/
 dreaming/runs/
 dreaming/state.json
+.langgraph_api/

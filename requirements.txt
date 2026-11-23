@@ -2,3 +2,6 @@ python-dotenv
 langchain-core
 langchain-openai
 langgraph
+langgraph-cli[inmem]
+colorama  # langgraph dev on Windows needs it for colored logs
+grandalf  # draw_ascii() of the graph

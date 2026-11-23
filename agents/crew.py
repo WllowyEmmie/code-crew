@@ -98,7 +98,8 @@ class ReadGate:
                 "relevant to this task before changing files.")
 
 
-def build_crew(llm, sb, store, context: str):
+def build_crew_parts(llm, sb, store, context: str):
+    """The crew's node and routing functions for one session (bound to its sandbox and memory)."""
     rules = prompts.SHARED_RULES
     all_skills = load_skills()
     langs = [p.name for p in sb.profiles]
@@ -312,14 +313,28 @@ def build_crew(llm, sb, store, context: str):
             return update
         return wrapped
 
-    g = StateGraph(CrewState)
-    g.add_node("builder", clear_feedback_then(builder_node))
-    g.add_node("test_writer", test_writer_node)
-    g.add_node("reviewer", reviewer_node)
-    g.add_node("give_up", give_up)
-    g.add_edge(START, "builder")
-    g.add_conditional_edges("builder", after_builder, ["test_writer", END])
-    g.add_conditional_edges("test_writer", after_tests, ["builder", "reviewer", "give_up", END])
-    g.add_conditional_edges("reviewer", after_review, ["builder", "give_up", END])
-    g.add_edge("give_up", END)
-    return g.compile()
+    nodes = {"builder": clear_feedback_then(builder_node), "test_writer": test_writer_node,
+             "reviewer": reviewer_node, "give_up": give_up}
+    routes = {"builder": after_builder, "test_writer": after_tests, "reviewer": after_review}
+    return nodes, routes
+
+
+def add_crew(g: StateGraph, nodes: dict, routes: dict, start=START, end=END):
+    """The crew's shape: builder -> test-writer -> reviewer, failures back to the builder.
+    Shared by the CLI graph (build_crew) and the LangGraph Studio graph (studio.py), which
+    adds a setup step before `start` and a wrap-up step at `end`."""
+    for name, fn in nodes.items():
+        g.add_node(name, fn)
+    g.add_edge(start, "builder")
+    g.add_conditional_edges("builder", routes["builder"], {"test_writer": "test_writer", END: end})
+    g.add_conditional_edges("test_writer", routes["test_writer"],
+                            {"builder": "builder", "reviewer": "reviewer", "give_up": "give_up", END: end})
+    g.add_conditional_edges("reviewer", routes["reviewer"],
+                            {"builder": "builder", "give_up": "give_up", END: end})
+    g.add_edge("give_up", end)
+    return g
+
+
+def build_crew(llm, sb, store, context: str):
+    nodes, routes = build_crew_parts(llm, sb, store, context)
+    return add_crew(StateGraph(CrewState), nodes, routes).compile()

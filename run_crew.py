@@ -72,30 +72,31 @@ def refresh_repo_facts(store: MemoryStore, sb):
         store.write("team/repo-facts.md", new, digest, "harness", sb.session_id, "measured from fresh clone")
 
 
-def run_session(request: str, repo_url: str, after=None, kind: str = "work", branch: str | None = None,
-                langs: list[str] | None = None) -> dict:
-    """Run the crew on one request in a fresh sandbox. `after(sb, state)` runs before the
-    sandbox closes (evals use it to run hidden checks). Returns the final crew state plus
-    the session id and transcript path."""
+def start_session(repo_url: str, branch: str | None = None, langs: list[str] | None = None):
+    """Fresh sandbox (clone, containers, network cut) plus memory and the agents' context."""
     sb = Sandbox(repo_url, branch=branch, langs=langs)
-    state = {"request": request, "status": "running", "conversations": {}}
-    extra = {}
     try:
         store = MemoryStore(MEMORY_DIR, repo_name(repo_url))
         refresh_repo_facts(store, sb)
         context = sandbox_context(sb) + "\n\n" + memory_context(store)
-        crew = build_crew(get_llm(), sb, store, context)
-        # Each agent prints its own steps; invoke returns the final crew state.
-        state = crew.invoke(state, config={"recursion_limit": 50})
-        if after:
-            extra = after(sb, state) or {}
-        if kind == "work":  # eval runs are never pushed
+    except BaseException:
+        sb.close()
+        raise
+    return sb, store, context
+
+
+def end_session(sb, state: dict, request: str, repo_url: str, kind: str = "work",
+                extra: dict | None = None, publish_it: bool = True) -> dict:
+    """Publish (work sessions only), print the result, save the transcript, close the sandbox."""
+    extra = dict(extra or {})
+    try:
+        if kind == "work" and publish_it:  # eval runs are never pushed
             extra.update(publish(sb, state, repo_url))
     finally:
         print("\n========== result ==========")
         print(f"status: {state.get('status')} (rounds: {state.get('round', 0)})")
-        print(sb.run(f"git log --oneline {sb.base_branch}..HEAD", timeout=30)["stdout"]
-              or "(no commits)")
+        commits = sb.run(f"git log --oneline {sb.base_branch}..HEAD", timeout=30)["stdout"]
+        print(commits or "(no commits)")
         print(f"branch: {sb.run('git branch --show-current', timeout=15)['stdout'].strip()}")
         if extra.get("published"):
             print(f"pushed to GitHub as: {extra.get('branch')}")
@@ -108,7 +109,28 @@ def run_session(request: str, repo_url: str, after=None, kind: str = "work", bra
                                state.get("feedback_log") or [], state.get("conversations") or {}, kind)
         print(f"transcript: {path}")
         sb.close()
-    return {**state, **extra, "session_id": sb.session_id, "transcript": str(path)}
+    return {**state, **extra, "session_id": sb.session_id, "transcript": str(path),
+            "commits": commits.strip()}
+
+
+def run_session(request: str, repo_url: str, after=None, kind: str = "work", branch: str | None = None,
+                langs: list[str] | None = None) -> dict:
+    """Run the crew on one request in a fresh sandbox. `after(sb, state)` runs before the
+    sandbox closes (evals use it to run hidden checks). Returns the final crew state plus
+    the session id and transcript path."""
+    sb, store, context = start_session(repo_url, branch, langs)
+    state = {"request": request, "status": "running", "conversations": {}}
+    extra, ok = {}, False
+    try:
+        crew = build_crew(get_llm(), sb, store, context)
+        # Each agent prints its own steps; invoke returns the final crew state.
+        state = crew.invoke(state, config={"recursion_limit": 50})
+        if after:
+            extra = after(sb, state) or {}
+        ok = True
+    finally:
+        result = end_session(sb, state, request, repo_url, kind, extra, publish_it=ok)
+    return result
 
 
 def maybe_dream(repo_url: str):

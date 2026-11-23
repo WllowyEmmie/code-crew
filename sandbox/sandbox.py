@@ -16,9 +16,19 @@ BASE_IMAGE = "base"  # used when no language is detected: just git + shell tools
 COMMON_ARTIFACTS = ["__pycache__/", "*.pyc", ".DS_Store"]
 
 
+def require_docker():
+    """Fail early with a clear message when Docker isn't running, instead of a build error."""
+    r = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("Docker isn't running: start Docker Desktop, wait until it says "
+                           "'Engine running', then try again.\n" + r.stderr.strip()[:300])
+
+
 def ensure_image(name: str) -> str:
     """Build the sandbox image for `name` when it's missing, or when its Dockerfile changed
     since it was built (the Dockerfile's hash is stored as a label on the image)."""
+    require_docker()
     tag = IMAGE_PREFIX + name
     dockerfile = (IMAGES_DIR / name / "Dockerfile").read_bytes()
     want = hashlib.sha256(dockerfile).hexdigest()[:16]

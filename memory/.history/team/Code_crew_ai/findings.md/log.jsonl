@@ -1,2 +1,8 @@
 {"version": 1, "sha256": "ffed918c6714", "deleted": false, "author": "reviewer", "session": "sess_b5f8cd017184", "time": "2026-11-07T16:02:00+00:00", "note": "finding"}
 {"version": 2, "sha256": null, "deleted": true, "author": "dreaming", "session": "dream_20261107_170302", "time": "2026-11-07T16:08:21+00:00", "note": "promoted dreaming run"}
+{"version": 3, "sha256": "c23dc3ddea98", "deleted": false, "author": "reviewer", "session": "sess_a5438f7700a6", "time": "2026-11-10T15:49:18+00:00", "note": "finding"}
+{"version": 4, "sha256": "fdc60bbda91a", "deleted": false, "author": "reviewer", "session": "sess_71cbc21f52bc", "time": "2026-11-10T16:13:52+00:00", "note": "finding"}
+{"version": 5, "sha256": "cf5eac74e836", "deleted": false, "author": "reviewer", "session": "sess_b7868af2730b", "time": "2026-11-10T16:20:44+00:00", "note": "finding"}
+{"version": 6, "sha256": "727f275b60f6", "deleted": false, "author": "builder", "session": "sess_35dd93d3f741", "time": "2026-11-10T16:24:30+00:00", "note": "finding"}
+{"version": 7, "sha256": "4214e59e1a51", "deleted": false, "author": "test-writer", "session": "sess_35dd93d3f741", "time": "2026-11-10T16:25:16+00:00", "note": "finding"}
+{"version": 8, "sha256": "07f44847e543", "deleted": false, "author": "reviewer", "session": "sess_35dd93d3f741", "time": "2026-11-10T16:33:08+00:00", "note": "finding"}

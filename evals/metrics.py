@@ -22,4 +22,5 @@ def session_metrics(transcript: Path) -> dict:
         "tool_errors": sum(str(t["content"]).startswith("error:") for t in tools),
         "memory_reads": names.count("memory_read") + names.count("memory_grep"),
         "memory_writes": names.count("memory_write"),
+        "skill_reads": names.count("skill_read"),
     }

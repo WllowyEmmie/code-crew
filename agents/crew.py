@@ -11,6 +11,7 @@ from typing import TypedDict
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 
+from tools.skills import load_skills, make_skill_tool, skills_for, skills_index
 from tools.files import is_test_path, make_file_tools
 from tools.git import make_git_tools
 from tools.conventions_check import conventions_error
@@ -99,7 +100,16 @@ class ReadGate:
 
 def build_crew(llm, sb, store, context: str):
     rules = prompts.SHARED_RULES
-    fill = lambda p: p.format(rules=rules, context=context)
+    all_skills = load_skills()
+    langs = [p.name for p in sb.profiles]
+
+    def fill(prompt: str, role: str) -> str:
+        """The role's prompt, the shared rules and context, and the index of its skills."""
+        return prompt.format(rules=rules, context=context) + skills_index(skills_for(all_skills, role, langs))
+
+    def skill_tools(role: str) -> list:
+        mine = skills_for(all_skills, role, langs)
+        return [make_skill_tool(mine)] if mine else []
 
     findings = {}  # role -> findings recorded in the current agent run (reset by each node)
 
@@ -156,8 +166,8 @@ def build_crew(llm, sb, store, context: str):
                     'conventions, repo-facts) you applied, or "none relevant".')
         return None
 
-    builder = make_agent(llm, files_all + terminal + git + builder_mem,
-                         fill(prompts.BUILDER), ("done",), validate=check_builder,
+    builder = make_agent(llm, files_all + terminal + git + builder_mem + skill_tools("builder"),
+                         fill(prompts.BUILDER, "builder"), ("done",), validate=check_builder,
                          learn_from_failures=True)
     # The test-writer's "pass" is only accepted if it actually committed test files this round.
     # (Without this check it once reported "added tests" after only re-running the builder's.)
@@ -175,8 +185,9 @@ def build_crew(llm, sb, store, context: str):
         return None
 
     test_writer = make_agent(llm, files_tests_only + terminal
-                             + pick(tw_git, "git_status", "git_diff", "git_diff_base", "git_commit") + tw_mem,
-                             fill(prompts.TEST_WRITER), ("pass", "fail", "nothing_to_test"),
+                             + pick(tw_git, "git_status", "git_diff", "git_diff_base", "git_commit") + tw_mem
+                             + skill_tools("test-writer"),
+                             fill(prompts.TEST_WRITER, "test-writer"), ("pass", "fail", "nothing_to_test"),
                              validate=check_test_writer, learn_from_failures=True)
     # The reviewer's summary must answer every checklist item, so it can't approve on a glance.
     def check_reviewer(verdict, summary):
@@ -189,8 +200,9 @@ def build_crew(llm, sb, store, context: str):
                     + ", ".join(missing) + ". Use each one as a heading.")
         return None
 
-    reviewer = make_agent(llm, files_read + terminal + pick(reviewer_git, "git_status", "git_diff_base") + reviewer_mem,
-                          fill(prompts.REVIEWER), ("approve", "changes"), validate=check_reviewer,
+    reviewer = make_agent(llm, files_read + terminal + pick(reviewer_git, "git_status", "git_diff_base") + reviewer_mem
+                          + skill_tools("reviewer"),
+                          fill(prompts.REVIEWER, "reviewer"), ("approve", "changes"), validate=check_reviewer,
                           learn_from_failures=True)
     def convo(state, name, msgs):
         c = dict(state.get("conversations") or {})

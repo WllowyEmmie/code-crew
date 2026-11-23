@@ -31,7 +31,7 @@ from run_crew import MEMORY_DIR, repo_name, run_session  # noqa: E402
 EVALS = ROOT / "evals"
 RESULTS = EVALS / "results"
 COLUMNS = ["hidden_pass", "rounds", "tool_calls", "refused_commits", "finish_rejected",
-           "nudges", "gate_blocks", "memory_reads", "memory_writes"]
+           "nudges", "gate_blocks", "memory_reads", "memory_writes", "skill_reads"]
 
 
 def memory_fingerprint(repo: str) -> str:
@@ -119,7 +119,7 @@ def main():
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--compare", action="store_true")
     args = ap.parse_args()
-    if args.compare:
+    if args.x:
         return compare()
     run(args.tasks, args.repeat)
 

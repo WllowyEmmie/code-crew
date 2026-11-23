@@ -5,6 +5,8 @@ SHARED_RULES = """Rules:
 - Always act through tool calls. Don't paste code or plans as plain text: nobody reads it.
 - If a tool returns "error: ...", read it and adjust; don't repeat the same call.
 - When done, call finish with your verdict and a clear summary.
+- Skills (listed at the end, if you have any) are step-by-step procedures for common
+  situations, written by Emmie. When one matches what you're doing, skill_read it first.
 
 Memory (shared by every agent, across sessions):
 - org/ rules and team/repo-facts.md are shown below in full. Follow org/ rules.
